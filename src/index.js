@@ -394,29 +394,26 @@ class Service extends AdapterService {
         };
       }
 
-      if (count) {
-        const idColumns = Array.isArray(this.id) ? this.id.map(idKey => `${this.Model.tableName}.${idKey}`) : [`${this.Model.tableName}.${this.id}`];
+     if (count) {
+        const idColumns = Array.isArray(this.id) ? this.id : [this.id];
 
         const countQuery = this._createQuery(params);
 
         if (query.$joinRelation) {
-          countQuery
-            .joinRelated(query.$joinRelation)
-            .countDistinct({ total: idColumns });
-        }
-        else if (query.$joinEager) {
-          countQuery
-            .joinRelation(query.$joinEager)
-            .countDistinct({ total: idColumns });
-        } else if (idColumns.length > 1) {
-          countQuery.countDistinct({ total: idColumns });
-        } else {
-          countQuery.count({ total: idColumns });
+          countQuery.joinRelated(query.$joinRelation);
+        } else if (query.$joinEager) {
+          countQuery.joinRelation(query.$joinEager);
         }
 
         this.objectify(countQuery, query);
+        const builder = countQuery.clone().clear(/orderBy|offset|limit/);
 
-        return countQuery
+        const countMethod = query.$joinRelation || query.$joinEager || idColumns.length > 1 ? "countDistinct" : "count";
+
+        return this.Model.query()[countMethod]({ total: idColumns })
+          .from(qb => {
+            builder.limit(this.options.maxTotalLimit || 10000).toKnexQuery(qb).as('temp');
+          })
           .then(count => parseInt(count[0].total, 10))
           .then(executeQuery)
           .catch(errorHandler);
