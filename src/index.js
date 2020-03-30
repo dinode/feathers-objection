@@ -172,6 +172,7 @@ class Service extends AdapterService {
     if (params.$eager) { delete params.$eager; }
     if (params.$joinEager) { delete params.$joinEager; }
     if (params.$joinRelation) { delete params.$joinRelation; }
+    if (params.$relatedQuery) { delete params.$relatedQuery; }
     if (params.$modifyEager) { delete params.$modifyEager; }
     if (params.$mergeEager) { delete params.$mergeEager; }
     if (params.$noSelect) { delete params.$noSelect; }
@@ -311,6 +312,20 @@ class Service extends AdapterService {
       q
         .distinct(`${this.Model.tableName}.*`)
         .joinRelated(query.$joinRelation);
+
+      delete query.$joinRelation;
+    }
+
+    if (query && query.$relatedQuery) {
+      Object.keys(query.$relatedQuery).forEach(relatedModelName => {
+        const subq = this.model.relatedQuery(relatedModelName);
+        const conditions = query.$relatedQuery[relatedModelName];
+        Object.keys(conditions).forEach(key => {
+          subq.where(key, conditions[key])
+        });
+
+        q.whereIn(`${relatedModelName}Id`, subq);
+      });
 
       delete query.$joinRelation;
     }
