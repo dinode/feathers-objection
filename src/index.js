@@ -271,6 +271,27 @@ class Service extends AdapterService {
     return optionRelations.merge(paramRelations);
   }
 
+
+  _relatedQuery(query, q) {
+    Object.keys(query.$relatedQuery).forEach(relatedModelName => {
+      q.leftJoinRelated(relatedModelName);
+      const subq = this.Model.relatedQuery(relatedModelName).select(
+        "_id"
+      );
+      const conditions = query.$relatedQuery[relatedModelName];
+      Object.keys(conditions).forEach(key => {
+        subq.where(key, conditions[key]);
+      });
+      const relationType = this.Model.relationMappings[relatedModelName]
+        .relation;
+      const isManyToMany = relationType.name === "ManyToManyRelation";
+      const joinColumnName = isManyToMany
+        ? `${relatedModelName}_join.${relatedModelName}Id`
+        : `${relatedModelName}._id`;
+      q.whereIn(joinColumnName, subq);
+    });
+  }
+
   _createQuery (params = {}) {
     const trx = params.transaction ? params.transaction.trx : null;
     const joinOnSameTable = params.query.$joinEager && params.query.$joinEager.split(",").some(field => field.includes(this.Model.tableName));
@@ -283,7 +304,7 @@ class Service extends AdapterService {
 
   createQuery (params = {}) {
     const { filters, query } = this.filterQuery(params);
-    const q = this._createQuery(params).skipUndefined();
+    const q = params.q || this._createQuery(params).skipUndefined();
     const eagerOptions = { ...this.eagerOptions, ...params.eagerOptions };
 
     if (this.allowedEager) { q.allowGraph(this.allowedEager); }
@@ -318,23 +339,7 @@ class Service extends AdapterService {
 
 
     if (query && query.$relatedQuery) {
-      Object.keys(query.$relatedQuery).forEach(relatedModelName => {
-        q.leftJoinRelated(relatedModelName);
-        const subq = this.Model.relatedQuery(relatedModelName).select(
-          "_id"
-        );
-        const conditions = query.$relatedQuery[relatedModelName];
-        Object.keys(conditions).forEach(key => {
-          subq.where(key, conditions[key]);
-        });
-        const relationType = this.Model.relationMappings[relatedModelName]
-          .relation;
-        const isManyToMany = relationType.name === "ManyToManyRelation";
-        const joinColumnName = isManyToMany
-          ? `${relatedModelName}_join.${relatedModelName}Id`
-          : `${relatedModelName}._id`;
-        q.whereIn(joinColumnName, subq);
-      });
+      this._relatedQuery(query, q);
       delete query.$relatedQuery;
     }
 
@@ -422,7 +427,9 @@ class Service extends AdapterService {
 
         const countQuery = this._createQuery(params);
 
-        if (query.$joinRelation) {
+        if (query.$relatedQuery) {
+          this._relatedQuery(query, countQuery);
+        } else if (query.$joinRelation) {
           countQuery.joinRelated(query.$joinRelation);
         } else if (query.$joinEager) {
           countQuery.joinRelation(query.$joinEager);
