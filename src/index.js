@@ -255,7 +255,12 @@ class Service extends AdapterService {
         value = JSON.parse(value);
       }
 
-      return operator === '=' ? query.where(column, value) : query.where(CAST_TO_TEXT.includes(operator) ? this.Model.raw('??::text', [column]) : column, operator, value);
+      let columnWithAlias = column;
+      if(column.includes('.')) {
+        const [prefix, suffix] = column.split('.');
+        columnWithAlias = `${(query.aliasFor(prefix) || prefix)}.${suffix}`;
+      }
+      return operator === '=' ? query.where(columnWithAlias, value) : query.where(CAST_TO_TEXT.includes(operator) ? this.Model.raw('??::text', [columnWithAlias]) : columnWithAlias, operator, value);
     });
   }
 
@@ -382,11 +387,14 @@ class Service extends AdapterService {
     this.objectify(q, query);
 
     if (filters.$sort) {
-      Object.keys(filters.$sort).forEach(item => {
-        const matches = item.match(/^ref\((.+)\)$/);
-        const key = matches ? ref(matches[1]) : item;
-
-        q.orderBy(key, filters.$sort[item] === 1 ? 'asc' : 'desc');
+      Object.keys(filters.$sort).forEach(key => {
+        const hasTablePrefix = key.includes('.');
+        if(!hasTablePrefix) {
+          q.orderBy(key, filters.$sort[key] === 1 ? 'asc' : 'desc');
+          return;
+        }
+        const [prefix, suffix] = key.split('.');
+        q.orderBy(`${q.aliasFor(prefix) || prefix}.${suffix}`, filters.$sort[key] === 1 ? 'asc' : 'desc');
       });
     }
 
