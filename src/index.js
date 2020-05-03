@@ -435,7 +435,7 @@ class Service extends AdapterService {
   _get (id, params) {
     const query = Object.assign({}, params.query, this.getIdsQuery(id));
 
-    return this._find(Object.assign({}, params, { query }))
+    return this._find(Object.assign({},  { paginate: false }, params, { query }))
       .then(page => {
         const data = page.data || page;
 
