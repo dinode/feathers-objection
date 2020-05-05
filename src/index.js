@@ -410,12 +410,14 @@ class Service extends AdapterService {
 
         const countMethod = query.$joinRelation || query.$joinEager || idColumns.length > 1 ? "countDistinct" : "count";
 
-        return this.Model.query()[countMethod]({ total: idColumns })
-          .from(qb => {
+        return Promise.all([
+          this.Model.query()[countMethod]({
+            total: idColumns
+          }).from(qb => {
             builder.limit(this.options.maxTotalLimit || 10000).toKnexQuery(qb).as('temp');
-          })
-          .then(count => parseInt(count[0].total, 10))
-          .then(executeQuery)
+          }),
+          executeQuery(0)
+        ]).then(results => ({ ...results[1], total: parseInt(results[0][0].total, 10) }))
           .catch(errorHandler);
       }
 
