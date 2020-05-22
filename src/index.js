@@ -172,6 +172,7 @@ class Service extends AdapterService {
     if (params.$eager) { delete params.$eager; }
     if (params.$joinEager) { delete params.$joinEager; }
     if (params.$joinRelation) { delete params.$joinRelation; }
+    if (params.$relatedQuery) { delete params.$relatedQuery; }
     if (params.$modifyEager) { delete params.$modifyEager; }
     if (params.$mergeEager) { delete params.$mergeEager; }
     if (params.$noSelect) { delete params.$noSelect; }
@@ -254,7 +255,12 @@ class Service extends AdapterService {
         value = JSON.parse(value);
       }
 
-      return operator === '=' ? query.where(column, value) : query.where(CAST_TO_TEXT.includes(operator) ? this.Model.raw('??::text', [column]) : column, operator, value);
+      let columnWithAlias = column;
+      if(column.includes('.')) {
+        const [prefix, suffix] = column.split('.');
+        columnWithAlias = `${(query.aliasFor(prefix) || prefix)}.${suffix}`;
+      }
+      return operator === '=' ? query.where(columnWithAlias, value) : query.where(CAST_TO_TEXT.includes(operator) ? this.Model.raw('??::text', [columnWithAlias]) : columnWithAlias, operator, value);
     });
   }
 
@@ -270,6 +276,27 @@ class Service extends AdapterService {
     return optionRelations.merge(paramRelations);
   }
 
+
+  _relatedQuery(query, q) {
+    Object.keys(query.$relatedQuery).forEach(relatedModelName => {
+      q.leftJoinRelated(relatedModelName);
+      const subq = this.Model.relatedQuery(relatedModelName).select(
+        "_id"
+      );
+      const conditions = query.$relatedQuery[relatedModelName];
+      Object.keys(conditions).forEach(key => {
+        subq.where(key, conditions[key]);
+      });
+      const relationType = this.Model.relationMappings[relatedModelName]
+        .relation;
+      const isManyToMany = relationType.name === "ManyToManyRelation";
+      const joinColumnName = isManyToMany
+        ? `${relatedModelName}_join.${relatedModelName}Id`
+        : `${relatedModelName}._id`;
+      q.whereIn(joinColumnName, subq);
+    });
+  }
+
   _createQuery (params = {}) {
     const trx = params.transaction ? params.transaction.trx : null;
     const joinOnSameTable = params.query && params.query.$joinEager && params.query.$joinEager.split(",").some(field => field.includes(this.Model.tableName));
@@ -282,7 +309,7 @@ class Service extends AdapterService {
 
   createQuery (params = {}) {
     const { filters, query } = this.filterQuery(params);
-    const q = this._createQuery(params).skipUndefined();
+    const q = params.q || this._createQuery(params).skipUndefined();
     const eagerOptions = { ...this.eagerOptions, ...params.eagerOptions };
 
     if (this.allowedEager) { q.allowGraph(this.allowedEager); }
@@ -291,7 +318,15 @@ class Service extends AdapterService {
 
     // $select uses a specific find syntax, so it has to come first.
     if (filters.$select) {
-      q.select(...filters.$select.concat(`${this.Model.tableName}.${this.id}`));
+      const items = filters.$select.concat(`${this.Model.tableName}.${this.id}`);
+
+      for (const [key, item] of Object.entries(items)) {
+        const matches = item.match(/^ref\((.+)\)( as (.+))?$/);
+        if (matches) {
+          items[key] = ref(matches[1]).as(matches[3] || matches[1]);
+        }
+      }
+      q.select(...items);
     }
 
     // $eager for Objection eager queries
@@ -313,6 +348,12 @@ class Service extends AdapterService {
         .joinRelated(query.$joinRelation);
 
       delete query.$joinRelation;
+    }
+
+
+    if (query && query.$relatedQuery) {
+      this._relatedQuery(query, q);
+      delete query.$relatedQuery;
     }
 
     if (query && query.$mergeEager) {
@@ -347,7 +388,13 @@ class Service extends AdapterService {
 
     if (filters.$sort) {
       Object.keys(filters.$sort).forEach(key => {
-        q.orderBy(key, filters.$sort[key] === 1 ? 'asc' : 'desc');
+        const hasTablePrefix = key.includes('.');
+        if(!hasTablePrefix) {
+          q.orderBy(key, filters.$sort[key] === 1 ? 'asc' : 'desc');
+          return;
+        }
+        const [prefix, suffix] = key.split('.');
+        q.orderBy(`${q.aliasFor(prefix) || prefix}.${suffix}`, filters.$sort[key] === 1 ? 'asc' : 'desc');
       });
     }
 
@@ -399,7 +446,9 @@ class Service extends AdapterService {
 
         const countQuery = this._createQuery(params);
 
-        if (query.$joinRelation) {
+        if (query.$relatedQuery) {
+          this._relatedQuery(query, countQuery);
+        } else if (query.$joinRelation) {
           countQuery.joinRelated(query.$joinRelation);
         } else if (query.$joinEager) {
           countQuery.joinRelation(query.$joinEager);
